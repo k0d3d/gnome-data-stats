@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "sync-version": "node scripts/sync-version.js",
+    "release": "node scripts/release.js",
     "build:release": "pnpm sync-version && pnpm tauri build"
   },
   "dependencies": {
