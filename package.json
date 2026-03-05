@@ -1,7 +1,7 @@
 {
   "name": "gnome-data-stats",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A modern, lightweight network data usage monitor for GNOME and other Linux desktops.",
   "type": "module",
   "scripts": {
