@@ -16,17 +16,30 @@
 - **Interface Persistence:** The app now remembers the last selected network interface across restarts.
 - **Improved UI:** Added a "Usage Grid" for quick glances at Session vs. Daily totals.
 
+### Phase 6: Robust Persistence & Granular History (v0.2.0 - Completed)
+- **Backend-side Persistence:** Moved the data recording logic from React to the Rust backend. Statistics are now saved to the database every 30 seconds, even when the UI is closed.
+- **Granular History:** 
+  - **Hourly Tracking:** Added a new `hourly_stats` table to track usage per hour.
+  - **Monthly Aggregation:** Implemented backend logic to aggregate daily data into monthly summaries.
+- **Advanced History Filtering:**
+  - Added a period selector (Hourly, Daily, Monthly) to the History tab.
+  - Implemented interface-specific filtering to view history for a single interface at a time.
+  - Integrated an interface selector directly into the History view.
+- **Database Migrations:** Implemented a versioned migration system to seamlessly upgrade existing databases (adding `hourly_stats` without data loss).
+
 ---
 
 ## 🔧 Technical Details: Traffic Differentiation
 - **Heuristic Approach:** The app monitors all traffic on the selected interface.
 - **Classification Note:** To maintain security and avoid requiring `root` privileges, the app currently tracks total interface throughput. An information panel was added to the "Plan" tab to explain how this relates to ISP data caps.
+- **Direct SQL Access:** The app uses `tauri-plugin-sql` and `sqlx` in the Rust backend to manage data efficiently.
 
 ---
 
 ## 🔧 Critical Fixes & System Setup
 - **Dependency Resolutions:** Fixed `tauri-plugin-opener` naming and resolved Tauri v2 `tray-icon` feature conflicts.
-- **Frontend Packages:** Installed `@tauri-apps/plugin-sql` to enable direct DB access from React.
+- **Backend Libraries:** Added `sqlx`, `chrono`, and `serde` to the Rust side to support advanced data handling.
+- **Tauri Config:** Corrected the placement of the `plugins` section in `tauri.conf.json` for Tauri v2 compatibility.
 
 ---
 
@@ -50,4 +63,3 @@ When building version `X.Y.Z`, Tauri automatically generates the files with the 
 - **Debian (.deb):** `src-tauri/target/release/bundle/deb/gnome-data-stats_X.Y.Z_amd64.deb`
 - **AppImage:** `src-tauri/target/release/bundle/appimage/gnome-data-stats_X.Y.Z_amd64.AppImage`
 - **Binary:** `src-tauri/target/release/gnome-data-stats`
-

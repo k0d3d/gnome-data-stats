@@ -8,7 +8,9 @@ A modern, lightweight network data usage monitor for GNOME and other Linux deskt
 
 - **Real-time Monitoring:** Live upload and download speeds in the UI and System Tray.
 - **Session Tracking:** Tracks how much data you've transferred since opening the app.
-- **Daily History:** Automatically logs usage to a local SQLite database for the last 30 days.
+- **Granular History:** Automatically logs usage to a local SQLite database with **Hourly, Daily, and Monthly** breakdowns.
+- **Robust Persistence:** Statistics are recorded by the backend even when the UI is closed.
+- **Interface Filtering:** View usage history filtered by individual network interfaces.
 - **Data Plan Heuristics:** Set a monthly limit and track your daily progress against it.
 - **GNOME Aesthetic:** Designed with an Adwaita-inspired (GTK-4) look and feel.
 - **System Tray Integration:** Quick-glance speeds in your top bar.
