@@ -4,8 +4,10 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::{Emitter, Manager, Runtime, AppHandle};
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{TrayIconBuilder, TrayIcon};
-use tauri_plugin_sql::{Migration, MigrationKind};
+use tauri::tray::{TrayIconBuilder};
+use tauri_plugin_sql::{Migration, MigrationKind, DbInstances, DbPool};
+use chrono::{Local, Datelike, Timelike};
+use sqlx::sqlite::SqlitePool;
 
 #[derive(Serialize, Clone, Debug)]
 struct NetworkInterface {
@@ -18,11 +20,13 @@ struct SpeedStats {
     interface: String,
     download_speed: f64,
     upload_speed: f64,
+    session_download: u64,
+    session_upload: u64,
 }
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, sqlx::FromRow)]
 struct HistoryEntry {
-    day: String,
+    period: String,
     interface: String,
     download: u64,
     upload: u64,
@@ -33,6 +37,7 @@ struct NetState {
     prev_bytes: HashMap<String, (u64, u64)>,
     last_update: Option<Instant>,
     accumulated: HashMap<String, (u64, u64)>,
+    session_totals: HashMap<String, (u64, u64)>,
 }
 
 fn format_tray_speed(bytes_per_sec: f64) -> String {
@@ -73,9 +78,59 @@ fn get_network_interfaces() -> Vec<NetworkInterface> {
         .collect()
 }
 
+async fn get_pool<R: Runtime>(handle: &AppHandle<R>) -> Result<SqlitePool, String> {
+    let instances = handle.state::<DbInstances>();
+    let instances_lock = instances.0.read().await;
+    let db_pool = instances_lock.get("sqlite:stats.db").ok_or("Database not loaded")?;
+    match db_pool {
+        DbPool::Sqlite(pool) => Ok(pool.clone()),
+        _ => Err("Expected SQLite database".to_string()),
+    }
+}
+
 #[tauri::command]
-async fn get_history(_app: AppHandle) -> Result<Vec<HistoryEntry>, String> {
-    Ok(vec![])
+async fn get_history<R: Runtime>(
+    handle: AppHandle<R>,
+    period_type: String, // "hourly", "daily", "monthly"
+    interface: Option<String>,
+) -> Result<Vec<HistoryEntry>, String> {
+    let pool = get_pool(&handle).await?;
+
+    let (sql, filter) = match period_type.as_str() {
+        "hourly" => {
+            if let Some(ref iface) = interface {
+                ("SELECT time_period as period, interface, download, upload FROM hourly_stats WHERE interface = ? ORDER BY time_period DESC LIMIT 100", Some(iface))
+            } else {
+                ("SELECT time_period as period, interface, download, upload FROM hourly_stats ORDER BY time_period DESC LIMIT 100", None)
+            }
+        }
+        "monthly" => {
+            if let Some(ref iface) = interface {
+                ("SELECT strftime('%Y-%m', day) as period, interface, SUM(download) as download, SUM(upload) as upload FROM daily_stats WHERE interface = ? GROUP BY period, interface ORDER BY period DESC LIMIT 12", Some(iface))
+            } else {
+                ("SELECT strftime('%Y-%m', day) as period, interface, SUM(download) as download, SUM(upload) as upload FROM daily_stats GROUP BY period, interface ORDER BY period DESC LIMIT 12", None)
+            }
+        }
+        "daily" | _ => {
+            if let Some(ref iface) = interface {
+                ("SELECT day as period, interface, download, upload FROM daily_stats WHERE interface = ? ORDER BY day DESC LIMIT 60", Some(iface))
+            } else {
+                ("SELECT day as period, interface, download, upload FROM daily_stats ORDER BY day DESC LIMIT 60", None)
+            }
+        }
+    };
+
+    let mut query = sqlx::query_as::<_, HistoryEntry>(sql);
+    if let Some(f) = filter {
+        query = query.bind(f);
+    }
+
+    let result = query
+        .fetch_all(&pool)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(result)
 }
 
 fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
@@ -109,10 +164,16 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
                             acc.0 += dl_delta;
                             acc.1 += ul_delta;
 
+                            let sess = state.session_totals.entry(name.clone()).or_insert((0, 0));
+                            sess.0 += dl_delta;
+                            sess.1 += ul_delta;
+
                             let _ = handle.emit("network-speed", SpeedStats {
                                 interface: name.clone(),
                                 download_speed: dl_speed,
                                 upload_speed: ul_speed,
+                                session_download: sess.0,
+                                session_upload: sess.1,
                             });
                         }
                     }
@@ -128,12 +189,58 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
             state.last_update = Some(now);
             save_counter += 1;
 
-            // Every 30 seconds, emit an event for the frontend to save the accumulated data to SQL
-            // This is a reliable pattern in Tauri when using frontend-centric plugins
             if save_counter >= 30 {
-                let _ = handle.emit("save-stats", state.accumulated.clone());
+                // Save to database
+                let handle_clone = handle.clone();
+                let accumulated = state.accumulated.clone();
                 state.accumulated.clear();
                 save_counter = 0;
+
+                // Fire and forget save
+                tauri::async_runtime::spawn(async move {
+                    if let Ok(pool) = get_pool(&handle_clone).await {
+                        let now = Local::now();
+                        let day = now.format("%Y-%m-%d").to_string();
+                        let hour = format!("{}-{:02}-{:02} {:02}:00", now.year(), now.month(), now.day(), now.hour());
+
+                        for (iface, (rx, tx)) in accumulated {
+                            if rx == 0 && tx == 0 { continue; }
+
+                            // Update daily_stats
+                            let _ = sqlx::query(
+                                "INSERT INTO daily_stats (day, interface, download, upload) 
+                                 VALUES (?, ?, ?, ?) 
+                                 ON CONFLICT(day, interface) DO UPDATE SET 
+                                 download = download + excluded.download, 
+                                 upload = upload + excluded.upload"
+                            )
+                            .bind(&day)
+                            .bind(&iface)
+                            .bind(rx as i64)
+                            .bind(tx as i64)
+                            .execute(&pool)
+                            .await;
+
+                            // Update hourly_stats
+                            let _ = sqlx::query(
+                                "INSERT INTO hourly_stats (time_period, interface, download, upload) 
+                                 VALUES (?, ?, ?, ?) 
+                                 ON CONFLICT(time_period, interface) DO UPDATE SET 
+                                 download = download + excluded.download, 
+                                 upload = upload + excluded.upload"
+                            )
+                            .bind(&hour)
+                            .bind(&iface)
+                            .bind(rx as i64)
+                            .bind(tx as i64)
+                            .execute(&pool)
+                            .await;
+                        }
+                        
+                        // Also emit to frontend so it can refresh if open
+                        let _ = handle_clone.emit("stats-saved", ());
+                    }
+                });
             }
 
             std::thread::sleep(Duration::from_secs(1));
@@ -153,6 +260,18 @@ pub fn run() {
                 download INTEGER,
                 upload INTEGER,
                 PRIMARY KEY (day, interface)
+            );",
+            kind: MigrationKind::Up,
+        },
+        Migration {
+            version: 2,
+            description: "create hourly_stats table",
+            sql: "CREATE TABLE IF NOT EXISTS hourly_stats (
+                time_period TEXT,
+                interface TEXT,
+                download INTEGER,
+                upload INTEGER,
+                PRIMARY KEY (time_period, interface)
             );",
             kind: MigrationKind::Up,
         }

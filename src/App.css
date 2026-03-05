@@ -130,6 +130,33 @@ select {
   color: var(--adwaita-accent);
 }
 
+.period-selector {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  background: var(--card-bg);
+  padding: 0.4rem;
+  border-radius: 12px;
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.period-selector button {
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  background: transparent;
+  color: #999;
+}
+
+.period-selector button.active {
+  background: var(--primary);
+  color: white;
+  box-shadow: 0 4px 12px rgba(53, 132, 228, 0.3);
+}
+
 .history-list {
   display: flex;
   flex-direction: column;
@@ -164,8 +191,122 @@ select {
   font-size: 0.9rem;
 }
 
-.history-values span {
+.fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.card-header {
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 0.4rem;
+  margin-bottom: 1.5rem;
+}
+
+.badge {
+  background: var(--adwaita-accent);
+  font-size: 0.7rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-weight: 800;
+}
+
+.usage-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.usage-card {
+  background: var(--adwaita-card-bg);
+  padding: 1.5rem;
+  border-radius: 16px;
+  border: 1px solid var(--adwaita-border);
+  text-align: left;
+}
+
+.large-value {
+  display: block;
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin: 0.5rem 0;
+  color: white;
+}
+
+.sub-values {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+  color: var(--adwaita-text-dim);
+  font-family: monospace;
+}
+
+.plan-card {
+  margin-top: 1.5rem;
+  background: var(--adwaita-card-bg);
+  padding: 1.5rem;
+  border-radius: 16px;
+  border: 1px solid var(--adwaita-border);
+}
+
+.plan-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.progress-bar {
+  height: 8px;
+  background: #1e1e1e;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 0.8rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--adwaita-accent);
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--adwaita-text-dim);
+  margin: 0;
+}
+
+input[type="number"] {
+  width: 100%;
+  padding: 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--adwaita-border);
+  background-color: #1e1e1e;
+  color: white;
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.info-box {
+  margin-top: 2rem;
+  padding: 1.5rem;
+  background: rgba(53, 132, 228, 0.1);
+  border-radius: 12px;
+  border-left: 4px solid var(--adwaita-accent);
+  text-align: left;
+}
+
+.info-box h3 {
+  margin-top: 0;
+  font-size: 1rem;
+}
+
+.info-box p {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--adwaita-text-dim);
 }

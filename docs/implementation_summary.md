@@ -1,58 +1,53 @@
-# Implementation Summary: GNOME Data Stats
+# Implementation Summary: Gnome Data Stats
 
 ## 🛠 Progress Log
 
-### Phase 1: Foundation (Completed)
-- Initialized Tauri v2 project with React 19 + TypeScript.
-- Added Rust dependencies: `zbus`, `tauri-plugin-sql`, `tauri-plugin-opener`.
-- Implemented `/proc/net/dev` parsing in Rust to discover network interfaces.
+### Phase 1-4: Foundation & UI (Completed)
+- Initialized Tauri v2 project with React 19 + Adwaita styling.
+- Implemented real-time polling and System Tray integration.
+- Established SQLite persistence for daily totals.
 
-### Phase 2: Real-time Engine (Completed)
-- Created a background thread in Rust to poll network statistics every second.
-- Implemented delta-based speed calculation (Download/Upload).
-- Integrated Tauri Events (`network-speed`) to stream data to the frontend.
+### Phase 5: Cumulative Monitoring & Data Plans (Completed)
+- **Session Tracking:** Added Rust-side accumulation to track bytes transferred since app launch.
+- **Daily Persistence:** Integrated frontend logic to fetch and display today's totals from SQLite.
+- **Data Plan Heuristics:** 
+  - Added a "Plan" tab to set monthly data limits (stored in `localStorage`).
+  - Implemented a progress bar in the Live view to track daily usage against the monthly cap.
+- **Interface Persistence:** The app now remembers the last selected network interface across restarts.
+- **Improved UI:** Added a "Usage Grid" for quick glances at Session vs. Daily totals.
 
-### Phase 3: Persistence (Completed)
-- Configured `tauri-plugin-sql` with SQLite.
-- Established a `daily_stats` table with automated migrations.
-- Implemented a "Sync" pattern: Rust emits `save-stats` every 30s, and the React frontend performs an `UPSERT` into SQLite.
-- Added a "History" view to visualize the last 30 days of data.
+---
 
-### Phase 4: UI & GNOME Integration (Completed)
-- Applied **Adwaita (GTK-4)** inspired styling using Vanilla CSS variables.
-- Implemented **System Tray** support:
-  - Real-time speed display in the tray title (e.g., `↓1.2K/s ↑0.5K/s`).
-  - Tray menu with "Show" and "Quit" options.
-- Added window event handling to **Hide on Close**, keeping the app running in the background.
+## 🔧 Technical Details: Traffic Differentiation
+- **Heuristic Approach:** The app monitors all traffic on the selected interface.
+- **Classification Note:** To maintain security and avoid requiring `root` privileges, the app currently tracks total interface throughput. An information panel was added to the "Plan" tab to explain how this relates to ISP data caps.
 
 ---
 
 ## 🔧 Critical Fixes & System Setup
-
-### Dependency Resolutions
-- **Rust Typos:** Corrected `tauri_plugin_opener` to `tauri-plugin-opener` in `Cargo.toml`.
-- **Feature Flags:** Resolved Tauri v2 conflict by using `tray-icon` and `image-png` features instead of the legacy `menu` feature.
-- **Frontend Packages:** Installed `@tauri-apps/plugin-sql` via pnpm to resolve Vite build errors.
-
-### Linux System Requirements
-To compile this app on a fresh Linux environment, the following system headers are required:
-```bash
-sudo apt update && sudo apt install -y \
-  libgtk-3-dev \
-  libwebkit2gtk-4.1-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev \
-  build-essential \
-  curl \
-  wget \
-  file \
-  libssl-dev \
-  pkg-config
-```
+- **Dependency Resolutions:** Fixed `tauri-plugin-opener` naming and resolved Tauri v2 `tray-icon` feature conflicts.
+- **Frontend Packages:** Installed `@tauri-apps/plugin-sql` to enable direct DB access from React.
 
 ---
 
-## 🚀 Build & Distribution
-- **Dev Mode:** `pnpm tauri dev`
-- **Build Release:** `pnpm tauri build`
-- **Output:** `.deb` and `AppImage` files are located in `src-tauri/target/release/bundle/`.
+## 📦 Versioning & Distribution
+The project uses `package.json` as the source of truth for versioning.
+
+### Synchronizing Versions
+To keep `package.json`, `tauri.conf.json`, and `Cargo.toml` in sync, run:
+```bash
+pnpm sync-version
+```
+
+### Building the Release
+To sync versions and build the production-ready installers in one command:
+```bash
+pnpm build:release
+```
+
+### Output Files
+When building version `X.Y.Z`, Tauri automatically generates the files with the correct version in the name:
+- **Debian (.deb):** `src-tauri/target/release/bundle/deb/gnome-data-stats_X.Y.Z_amd64.deb`
+- **AppImage:** `src-tauri/target/release/bundle/appimage/gnome-data-stats_X.Y.Z_amd64.AppImage`
+- **Binary:** `src-tauri/target/release/gnome-data-stats`
+

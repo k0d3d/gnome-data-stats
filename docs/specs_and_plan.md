@@ -21,9 +21,10 @@
 ### Key Features
 1. **Real-time Monitoring:** Live upload/download speeds per active interface.
 2. **Session Tracking:** Bytes transferred since the application started.
-3. **Historical Data:** Daily/Monthly data usage summaries with progress bars against user-defined limits.
-4. **Interface Selection:** Ability to switch between Wi-Fi, Ethernet, or mobile data monitoring.
-5. **System Tray:** A "GNOME-like" status indicator (AppIndicator) for quick glances at speeds.
+3. **Daily Usage:** Persistent tracking of total bytes used per day using SQLite.
+4. **Data Plan Settings:** User-defined monthly limits with visual progress indicators.
+5. **Interface Memory:** Automatically restores the last used interface on startup.
+6. **System Tray:** GNOME-style status indicator showing live speeds in the top bar.
 
 ---
 

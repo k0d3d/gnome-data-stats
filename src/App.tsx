@@ -13,10 +13,12 @@ interface SpeedStats {
   interface: string;
   download_speed: number;
   upload_speed: number;
+  session_download: number;
+  session_upload: number;
 }
 
 interface HistoryEntry {
-  day: string;
+  period: string;
   interface: string;
   download: number;
   upload: number;
@@ -51,11 +53,27 @@ function App() {
   const [selected, setSelected] = useState<string>(() => {
     return localStorage.getItem("last-interface") || "";
   });
-  const [tab, setTab] = useState<"live" | "history">("live");
+  const [tab, setTab] = useState<"live" | "history" | "settings">("live");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [speeds, setSpeeds] = useState<{ download: number; upload: number }>({
+  const [historyPeriod, setHistoryPeriod] = useState<"hourly" | "daily" | "monthly">("daily");
+  const [limit, setLimit] = useState<number>(() => {
+    return Number(localStorage.getItem("data-limit")) || 100; // GB
+  });
+
+  const [speeds, setSpeeds] = useState<{
+    download: number;
+    upload: number;
+    session_dl: number;
+    session_ul: number;
+    daily_dl: number;
+    daily_ul: number;
+  }>({
     download: 0,
     upload: 0,
+    session_dl: 0,
+    session_ul: 0,
+    daily_dl: 0,
+    daily_ul: 0,
   });
 
   useEffect(() => {
@@ -63,8 +81,6 @@ function App() {
       try {
         const result = await invoke<NetworkInterface[]>("get_network_interfaces");
         setInterfaces(result);
-        
-        // Restore saved interface if it exists, otherwise pick first
         const saved = localStorage.getItem("last-interface");
         if (saved && result.some(i => i.name === saved)) {
           setSelected(saved);
@@ -80,20 +96,40 @@ function App() {
     fetchInterfaces();
   }, []);
 
-  const handleInterfaceChange = (name: string) => {
-    setSelected(name);
-    localStorage.setItem("last-interface", name);
-    // Reset speeds when changing interface to avoid stale data
-    setSpeeds({ download: 0, upload: 0 });
+  const loadDailyTotal = async (iface: string) => {
+    try {
+      const db = await Database.load("sqlite:stats.db");
+      const day = new Date().toISOString().split("T")[0];
+      const result = await db.select<any[]>(
+        "SELECT * FROM daily_stats WHERE day = ? AND interface = ?",
+        [day, iface]
+      );
+      if (result.length > 0) {
+        setSpeeds(s => ({
+          ...s,
+          daily_dl: result[0].download,
+          daily_ul: result[0].upload
+        }));
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
+
+  useEffect(() => {
+    if (selected) loadDailyTotal(selected);
+  }, [selected]);
 
   useEffect(() => {
     const unlisten = listen<SpeedStats>("network-speed", (event) => {
       if (event.payload.interface === selected) {
-        setSpeeds({
+        setSpeeds(prev => ({
+          ...prev,
           download: event.payload.download_speed,
           upload: event.payload.upload_speed,
-        });
+          session_dl: event.payload.session_download,
+          session_ul: event.payload.session_upload,
+        }));
       }
     });
 
@@ -102,46 +138,44 @@ function App() {
     };
   }, [selected]);
 
-  useEffect(() => {
-    const unlistenSave = listen<Record<string, [number, number]>>("save-stats", async (event) => {
-      const db = await Database.load("sqlite:stats.db");
-      const day = new Date().toISOString().split("T")[0];
-      
-      for (const [iface, [rx, tx]] of Object.entries(event.payload)) {
-        if (rx === 0 && tx === 0) continue;
-        
-        await db.execute(
-          `INSERT INTO daily_stats (day, interface, download, upload) 
-           VALUES (?, ?, ?, ?) 
-           ON CONFLICT(day, interface) DO UPDATE SET 
-           download = download + excluded.download, 
-           upload = upload + excluded.upload`,
-          [day, iface, rx, tx]
-        );
-      }
-    });
-
-    return () => {
-      unlistenSave.then((f) => f());
-    };
-  }, []);
+  const loadHistory = async () => {
+    try {
+      const result = await invoke<HistoryEntry[]>("get_history", { 
+        periodType: historyPeriod,
+        interface: selected
+      });
+      setHistory(result);
+    } catch (error) {
+      console.error("Failed to load history:", error);
+    }
+  };
 
   useEffect(() => {
     if (tab === "history") {
-      async function loadHistory() {
-        try {
-          const db = await Database.load("sqlite:stats.db");
-          const result = await db.select<HistoryEntry[]>(
-            "SELECT * FROM daily_stats ORDER BY day DESC LIMIT 30"
-          );
-          setHistory(result);
-        } catch (error) {
-          console.error("Failed to load history:", error);
-        }
-      }
       loadHistory();
     }
-  }, [tab]);
+  }, [tab, historyPeriod, selected]);
+
+  useEffect(() => {
+    const unlistenSaved = listen("stats-saved", () => {
+      if (selected) loadDailyTotal(selected);
+      if (tab === "history") loadHistory();
+    });
+
+    return () => {
+      unlistenSaved.then((f) => f());
+    };
+  }, [tab, selected, historyPeriod]);
+
+  const handleInterfaceChange = (name: string) => {
+    setSelected(name);
+    localStorage.setItem("last-interface", name);
+    setSpeeds({ download: 0, upload: 0, session_dl: 0, session_ul: 0, daily_dl: 0, daily_ul: 0 });
+  };
+
+  const totalMonthly = (speeds.daily_dl + speeds.daily_ul);
+  const limitBytes = limit * 1024 * 1024 * 1024;
+  const percentage = Math.min(100, (totalMonthly / limitBytes) * 100);
 
   return (
     <main className="container">
@@ -150,11 +184,12 @@ function App() {
         <nav>
           <button className={tab === "live" ? "active" : ""} onClick={() => setTab("live")}>Live</button>
           <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>History</button>
+          <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>Plan</button>
         </nav>
       </header>
 
-      {tab === "live" ? (
-        <>
+      {tab === "live" && (
+        <div className="fade-in">
           <div className="section">
             <label>Select Interface:</label>
             <select value={selected} onChange={(e) => handleInterfaceChange(e.target.value)}>
@@ -167,7 +202,10 @@ function App() {
           </div>
 
           <div className="stats-card">
-            <h2>Monitoring: {selected || "None"}</h2>
+            <div className="card-header">
+              <h2>Real-time Speeds</h2>
+              <span className="badge">LIVE</span>
+            </div>
             <div className="speed-row">
               <div className="speed-item">
                 <span className="label">Download</span>
@@ -179,22 +217,113 @@ function App() {
               </div>
             </div>
           </div>
-        </>
-      ) : (
-        <div className="history-list">
-          {history.length === 0 ? (
-            <p>No historical data yet.</p>
-          ) : (
-            history.map((entry, i) => (
-              <div key={i} className="history-item">
-                <div className="history-date">{entry.day} ({entry.interface})</div>
-                <div className="history-values">
-                  <span>⬇ {formatBytes(entry.download)}</span>
-                  <span>⬆ {formatBytes(entry.upload)}</span>
-                </div>
+
+          <div className="usage-grid">
+            <div className="usage-card small">
+              <span className="label">Session Total</span>
+              <span className="large-value">{formatBytes(speeds.session_dl + speeds.session_ul)}</span>
+              <div className="sub-values">
+                <span>⬇ {formatBytes(speeds.session_dl)}</span>
+                <span>⬆ {formatBytes(speeds.session_ul)}</span>
               </div>
-            ))
-          )}
+            </div>
+            <div className="usage-card small">
+              <span className="label">Today's Total</span>
+              <span className="large-value">{formatBytes(speeds.daily_dl + speeds.daily_ul)}</span>
+              <div className="sub-values">
+                <span>⬇ {formatBytes(speeds.daily_dl)}</span>
+                <span>⬆ {formatBytes(speeds.daily_ul)}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="plan-card">
+            <div className="plan-info">
+              <span className="label">Data Plan Usage (Daily)</span>
+              <span className="percentage">{percentage.toFixed(1)}%</span>
+            </div>
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${percentage}%` }}></div>
+            </div>
+            <p className="hint">Plan: {limit} GB / Month (Heuristic: Showing Daily against Plan)</p>
+          </div>
+        </div>
+      )}
+
+      {tab === "history" && (
+        <div className="fade-in">
+          <div className="section" style={{ marginBottom: "1rem" }}>
+            <label>Interface:</label>
+            <select value={selected} onChange={(e) => handleInterfaceChange(e.target.value)}>
+              {interfaces.map((iface) => (
+                <option key={iface.name} value={iface.name}>
+                  {iface.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="period-selector">
+            <button 
+              className={historyPeriod === "hourly" ? "active" : ""} 
+              onClick={() => setHistoryPeriod("hourly")}
+            >
+              Hourly
+            </button>
+            <button 
+              className={historyPeriod === "daily" ? "active" : ""} 
+              onClick={() => setHistoryPeriod("daily")}
+            >
+              Daily
+            </button>
+            <button 
+              className={historyPeriod === "monthly" ? "active" : ""} 
+              onClick={() => setHistoryPeriod("monthly")}
+            >
+              Monthly
+            </button>
+          </div>
+          
+          <div className="history-list">
+            {history.length === 0 ? (
+              <p className="empty">No historical data yet.</p>
+            ) : (
+              history.map((entry, i) => (
+                <div key={i} className="history-item">
+                  <div className="history-info">
+                    <div className="history-date">{entry.period}</div>
+                    <div className="history-iface">{entry.interface}</div>
+                  </div>
+                  <div className="history-values">
+                    <span>⬇ {formatBytes(entry.download)}</span>
+                    <span>⬆ {formatBytes(entry.upload)}</span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {tab === "settings" && (
+        <div className="settings-panel fade-in">
+          <div className="section">
+            <label>Monthly Data Limit (GB)</label>
+            <input 
+              type="number" 
+              value={limit} 
+              onChange={(e) => {
+                const val = Number(e.target.value);
+                setLimit(val);
+                localStorage.setItem("data-limit", val.toString());
+              }} 
+            />
+          </div>
+          <div className="info-box">
+            <h3>Traffic Classification</h3>
+            <p><strong>Total Traffic:</strong> Includes all bytes moving through the interface (LAN + Internet).</p>
+            <p><strong>Note:</strong> Perfectly splitting Internet vs LAN requires root-level packet inspection, which this app avoids for security. Use "Plan" to monitor your ISP limits.</p>
+          </div>
         </div>
       )}
     </main>
