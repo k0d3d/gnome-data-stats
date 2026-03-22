@@ -11,7 +11,7 @@ use sqlx::sqlite::SqlitePool;
 use std::sync::Mutex;
 
 mod app_stats;
-use app_stats::{AppUsage, get_process_map};
+use app_stats::AppUsage;
 
 #[derive(Serialize, Clone, Debug)]
 struct NetworkInterface {
@@ -102,6 +102,7 @@ async fn get_pool<R: Runtime>(handle: &AppHandle<R>) -> Result<SqlitePool, Strin
     let db_pool = instances_lock.get("sqlite:stats.db").ok_or("Database not loaded")?;
     match db_pool {
         DbPool::Sqlite(pool) => Ok(pool.clone()),
+        #[allow(unreachable_patterns)]
         _ => Err("Expected SQLite database".to_string()),
     }
 }
@@ -170,10 +171,9 @@ async fn get_app_usage(state: tauri::State<'_, AppState>) -> Result<Vec<AppUsage
 
 fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
     let handle = app.handle().clone();
-    let app_state = app.state::<AppState>();
-    let app_state_inner = app_state.inner().clone();
 
     // Main network monitoring thread
+    let handle_net = handle.clone();
     std::thread::spawn(move || {
         let mut state = NetState::default();
         let mut save_counter = 0;
@@ -207,7 +207,7 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
                             sess.0 += dl_delta;
                             sess.1 += ul_delta;
 
-                            let _ = handle.emit("network-speed", SpeedStats {
+                            let _ = handle_net.emit("network-speed", SpeedStats {
                                 interface: name.clone(),
                                 download_speed: dl_speed,
                                 upload_speed: ul_speed,
@@ -217,7 +217,7 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
                         }
                     }
 
-                    if let Some(tray) = handle.tray_by_id("main-tray") {
+                    if let Some(tray) = handle_net.tray_by_id("main-tray") {
                         let tray_title = format!("↓{} ↑{}", format_tray_speed(total_dl), format_tray_speed(total_ul));
                         let _ = tray.set_title(Some(tray_title));
                     }
@@ -229,7 +229,7 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
             save_counter += 1;
 
             if save_counter >= 30 {
-                let handle_clone = handle.clone();
+                let handle_clone = handle_net.clone();
                 let accumulated = state.accumulated.clone();
                 state.accumulated.clear();
                 save_counter = 0;
@@ -245,7 +245,7 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
 
                             let _ = sqlx::query(
                                 "INSERT INTO daily_stats (day, interface, download, upload) 
-                                 VALUES (?, ?, ?, ?) 
+                                 VALUES (?, ?, ?) 
                                  ON CONFLICT(day, interface) DO UPDATE SET 
                                  download = download + excluded.download, 
                                  upload = upload + excluded.upload"
@@ -281,15 +281,17 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
     });
 
     // App monitoring thread
-    let app_handle_for_stats = app.handle().clone();
+    let handle_app = handle.clone();
     std::thread::spawn(move || {
         let mut last_io = HashMap::new();
         
         loop {
-            let enabled = *app_state_inner.tracking_enabled.lock().unwrap();
+            let state = handle_app.state::<AppState>();
+            let enabled = *state.tracking_enabled.lock().unwrap();
+            
             if enabled {
                 if let Ok(all_procs) = procfs::process::all_processes() {
-                    let mut current_usage = app_state_inner.app_usage.lock().unwrap();
+                    let mut current_usage = state.app_usage.lock().unwrap();
                     
                     for p in all_procs {
                         if let Ok(proc) = p {
