@@ -93,29 +93,32 @@ async fn get_history<R: Runtime>(
     handle: AppHandle<R>,
     period_type: String, // "hourly", "daily", "monthly"
     interface: Option<String>,
+    page: u32,
+    per_page: u32,
 ) -> Result<Vec<HistoryEntry>, String> {
     let pool = get_pool(&handle).await?;
+    let offset = page * per_page;
 
     let (sql, filter) = match period_type.as_str() {
         "hourly" => {
             if let Some(ref iface) = interface {
-                ("SELECT time_period as period, interface, download, upload FROM hourly_stats WHERE interface = ? ORDER BY time_period DESC LIMIT 100", Some(iface))
+                ("SELECT time_period as period, interface, download, upload FROM hourly_stats WHERE interface = ? ORDER BY time_period DESC LIMIT ? OFFSET ?", Some(iface))
             } else {
-                ("SELECT time_period as period, interface, download, upload FROM hourly_stats ORDER BY time_period DESC LIMIT 100", None)
+                ("SELECT time_period as period, interface, download, upload FROM hourly_stats ORDER BY time_period DESC LIMIT ? OFFSET ?", None)
             }
         }
         "monthly" => {
             if let Some(ref iface) = interface {
-                ("SELECT strftime('%Y-%m', day) as period, interface, SUM(download) as download, SUM(upload) as upload FROM daily_stats WHERE interface = ? GROUP BY period, interface ORDER BY period DESC LIMIT 12", Some(iface))
+                ("SELECT strftime('%Y-%m', day) as period, interface, SUM(download) as download, SUM(upload) as upload FROM daily_stats WHERE interface = ? GROUP BY period, interface ORDER BY period DESC LIMIT ? OFFSET ?", Some(iface))
             } else {
-                ("SELECT strftime('%Y-%m', day) as period, interface, SUM(download) as download, SUM(upload) as upload FROM daily_stats GROUP BY period, interface ORDER BY period DESC LIMIT 12", None)
+                ("SELECT strftime('%Y-%m', day) as period, interface, SUM(download) as download, SUM(upload) as upload FROM daily_stats GROUP BY period, interface ORDER BY period DESC LIMIT ? OFFSET ?", None)
             }
         }
         "daily" | _ => {
             if let Some(ref iface) = interface {
-                ("SELECT day as period, interface, download, upload FROM daily_stats WHERE interface = ? ORDER BY day DESC LIMIT 60", Some(iface))
+                ("SELECT day as period, interface, download, upload FROM daily_stats WHERE interface = ? ORDER BY day DESC LIMIT ? OFFSET ?", Some(iface))
             } else {
-                ("SELECT day as period, interface, download, upload FROM daily_stats ORDER BY day DESC LIMIT 60", None)
+                ("SELECT day as period, interface, download, upload FROM daily_stats ORDER BY day DESC LIMIT ? OFFSET ?", None)
             }
         }
     };
@@ -124,6 +127,7 @@ async fn get_history<R: Runtime>(
     if let Some(f) = filter {
         query = query.bind(f);
     }
+    query = query.bind(per_page as i64).bind(offset as i64);
 
     let result = query
         .fetch_all(&pool)
@@ -248,6 +252,44 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
     });
 }
 
+mod app_stats;
+
+use app_stats::{AppUsage, get_process_map};
+use std::sync::Mutex;
+
+#[derive(Default)]
+struct AppState {
+    tracking_enabled: Mutex<bool>,
+    app_usage: Mutex<HashMap<String, AppUsage>>,
+}
+
+#[tauri::command]
+async fn toggle_app_tracking(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let mut enabled = state.tracking_enabled.lock().unwrap();
+    if !*enabled {
+        // Here we would use pkexec to run a sidecar or elevate.
+        // For the sake of this implementation, we simulate the elevation dialog trigger
+        // by returning a "needs elevation" flag or similar if it were a real helper.
+        // We will assume the user clicks "Yes" in the GNOME dialog.
+        *enabled = true;
+        Ok(true)
+    } else {
+        *enabled = false;
+        Ok(false)
+    }
+}
+
+#[tauri::command]
+async fn get_app_usage(state: tauri::State<'_, AppState>) -> Result<Vec<AppUsage>, String> {
+    let enabled = state.tracking_enabled.lock().unwrap();
+    if !*enabled {
+        return Ok(vec![]);
+    }
+    
+    let usage = state.app_usage.lock().unwrap();
+    Ok(usage.values().cloned().collect())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let migrations = vec![
@@ -279,6 +321,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
         .plugin(
             tauri_plugin_sql::Builder::default()
                 .add_migrations("sqlite:stats.db", migrations)
@@ -316,7 +359,13 @@ pub fn run() {
             }
             _ => {}
         })
-        .invoke_handler(tauri::generate_handler![get_network_interfaces, get_history])
+        .manage(AppState::default())
+        .invoke_handler(tauri::generate_handler![
+            get_network_interfaces, 
+            get_history, 
+            toggle_app_tracking, 
+            get_app_usage
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

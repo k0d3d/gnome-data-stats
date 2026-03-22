@@ -53,9 +53,12 @@ function App() {
   const [selected, setSelected] = useState<string>(() => {
     return localStorage.getItem("last-interface") || "";
   });
-  const [tab, setTab] = useState<"live" | "history" | "settings">("live");
+  const [tab, setTab] = useState<"live" | "history" | "plan">("live");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyPeriod, setHistoryPeriod] = useState<"hourly" | "daily" | "monthly">("daily");
+  const [page, setPage] = useState(0);
+  const perPage = 20;
+
   const [limit, setLimit] = useState<number>(() => {
     return Number(localStorage.getItem("data-limit")) || 100; // GB
   });
@@ -142,7 +145,9 @@ function App() {
     try {
       const result = await invoke<HistoryEntry[]>("get_history", { 
         periodType: historyPeriod,
-        interface: selected
+        interface: selected,
+        page,
+        perPage
       });
       setHistory(result);
     } catch (error) {
@@ -154,7 +159,7 @@ function App() {
     if (tab === "history") {
       loadHistory();
     }
-  }, [tab, historyPeriod, selected]);
+  }, [tab, historyPeriod, selected, page]);
 
   useEffect(() => {
     const unlistenSaved = listen("stats-saved", () => {
@@ -165,12 +170,13 @@ function App() {
     return () => {
       unlistenSaved.then((f) => f());
     };
-  }, [tab, selected, historyPeriod]);
+  }, [tab, selected, historyPeriod, page]);
 
   const handleInterfaceChange = (name: string) => {
     setSelected(name);
     localStorage.setItem("last-interface", name);
     setSpeeds({ download: 0, upload: 0, session_dl: 0, session_ul: 0, daily_dl: 0, daily_ul: 0 });
+    setPage(0);
   };
 
   const totalMonthly = (speeds.daily_dl + speeds.daily_ul);
@@ -183,8 +189,8 @@ function App() {
         <h1>Gnome Data Stats</h1>
         <nav>
           <button className={tab === "live" ? "active" : ""} onClick={() => setTab("live")}>Live</button>
-          <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>History</button>
-          <button className={tab === "settings" ? "active" : ""} onClick={() => setTab("settings")}>Plan</button>
+          <button className={tab === "history" ? "active" : ""} onClick={() => { setTab("history"); setPage(0); }}>History</button>
+          <button className={tab === "plan" ? "active" : ""} onClick={() => setTab("plan")}>Plan</button>
         </nav>
       </header>
 
@@ -266,19 +272,19 @@ function App() {
           <div className="period-selector">
             <button 
               className={historyPeriod === "hourly" ? "active" : ""} 
-              onClick={() => setHistoryPeriod("hourly")}
+              onClick={() => { setHistoryPeriod("hourly"); setPage(0); }}
             >
               Hourly
             </button>
             <button 
               className={historyPeriod === "daily" ? "active" : ""} 
-              onClick={() => setHistoryPeriod("daily")}
+              onClick={() => { setHistoryPeriod("daily"); setPage(0); }}
             >
               Daily
             </button>
             <button 
               className={historyPeriod === "monthly" ? "active" : ""} 
-              onClick={() => setHistoryPeriod("monthly")}
+              onClick={() => { setHistoryPeriod("monthly"); setPage(0); }}
             >
               Monthly
             </button>
@@ -288,24 +294,42 @@ function App() {
             {history.length === 0 ? (
               <p className="empty">No historical data yet.</p>
             ) : (
-              history.map((entry, i) => (
-                <div key={i} className="history-item">
-                  <div className="history-info">
-                    <div className="history-date">{entry.period}</div>
-                    <div className="history-iface">{entry.interface}</div>
+              <>
+                {history.map((entry, i) => (
+                  <div key={i} className="history-item">
+                    <div className="history-info">
+                      <div className="history-date">{entry.period}</div>
+                      <div className="history-iface">{entry.interface}</div>
+                    </div>
+                    <div className="history-values">
+                      <span>⬇ {formatBytes(entry.download)}</span>
+                      <span>⬆ {formatBytes(entry.upload)}</span>
+                    </div>
                   </div>
-                  <div className="history-values">
-                    <span>⬇ {formatBytes(entry.download)}</span>
-                    <span>⬆ {formatBytes(entry.upload)}</span>
-                  </div>
+                ))}
+                
+                <div className="pagination">
+                  <button 
+                    disabled={page === 0} 
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                  >
+                    Previous
+                  </button>
+                  <span className="page-info">Page {page + 1}</span>
+                  <button 
+                    disabled={history.length < perPage} 
+                    onClick={() => setPage(p => p + 1)}
+                  >
+                    Next
+                  </button>
                 </div>
-              ))
+              </>
             )}
           </div>
         </div>
       )}
 
-      {tab === "settings" && (
+      {tab === "plan" && (
         <div className="settings-panel fade-in">
           <div className="section">
             <label>Monthly Data Limit (GB)</label>
