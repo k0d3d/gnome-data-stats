@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import Database from "@tauri-apps/plugin-sql";
 import "./App.css";
 
@@ -20,6 +21,12 @@ interface SpeedStats {
 interface HistoryEntry {
   period: string;
   interface: string;
+  download: number;
+  upload: number;
+}
+
+interface AppUsage {
+  name: string;
   download: number;
   upload: number;
 }
@@ -53,15 +60,19 @@ function App() {
   const [selected, setSelected] = useState<string>(() => {
     return localStorage.getItem("last-interface") || "";
   });
-  const [tab, setTab] = useState<"live" | "history" | "plan">("live");
+  const [tab, setTab] = useState<"live" | "apps" | "history" | "plan" | "about">("live");
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [historyPeriod, setHistoryPeriod] = useState<"hourly" | "daily" | "monthly">("daily");
   const [page, setPage] = useState(0);
   const perPage = 20;
+  const [appVersion, setAppVersion] = useState("");
 
   const [limit, setLimit] = useState<number>(() => {
     return Number(localStorage.getItem("data-limit")) || 100; // GB
   });
+
+  const [isDetailedTracking, setIsDetailedTracking] = useState(false);
+  const [appStats, setAppStats] = useState<AppUsage[]>([]);
 
   const [speeds, setSpeeds] = useState<{
     download: number;
@@ -80,8 +91,11 @@ function App() {
   });
 
   useEffect(() => {
-    async function fetchInterfaces() {
+    async function init() {
       try {
+        const version = await getVersion();
+        setAppVersion(version);
+
         const result = await invoke<NetworkInterface[]>("get_network_interfaces");
         setInterfaces(result);
         const saved = localStorage.getItem("last-interface");
@@ -93,10 +107,10 @@ function App() {
           localStorage.setItem("last-interface", defaultIface);
         }
       } catch (error) {
-        console.error("Failed to fetch interfaces:", error);
+        console.error("Initialization failed:", error);
       }
     }
-    fetchInterfaces();
+    init();
   }, []);
 
   const loadDailyTotal = async (iface: string) => {
@@ -172,6 +186,32 @@ function App() {
     };
   }, [tab, selected, historyPeriod, page]);
 
+  // Periodic app stats fetch
+  useEffect(() => {
+    let interval: number;
+    if (isDetailedTracking && tab === "apps") {
+      interval = window.setInterval(async () => {
+        try {
+          const stats = await invoke<AppUsage[]>("get_app_usage");
+          setAppStats(stats.sort((a, b) => (b.download + b.upload) - (a.download + a.upload)));
+        } catch (e) {
+          console.error(e);
+        }
+      }, 2000);
+    }
+    return () => clearInterval(interval);
+  }, [isDetailedTracking, tab]);
+
+  const toggleTracking = async () => {
+    try {
+      const result = await invoke<boolean>("toggle_app_tracking");
+      setIsDetailedTracking(result);
+      if (!result) setAppStats([]);
+    } catch (e) {
+      console.error("Failed to toggle tracking:", e);
+    }
+  };
+
   const handleInterfaceChange = (name: string) => {
     setSelected(name);
     localStorage.setItem("last-interface", name);
@@ -189,8 +229,10 @@ function App() {
         <h1>Gnome Data Stats</h1>
         <nav>
           <button className={tab === "live" ? "active" : ""} onClick={() => setTab("live")}>Live</button>
+          <button className={tab === "apps" ? "active" : ""} onClick={() => setTab("apps")}>Apps</button>
           <button className={tab === "history" ? "active" : ""} onClick={() => { setTab("history"); setPage(0); }}>History</button>
           <button className={tab === "plan" ? "active" : ""} onClick={() => setTab("plan")}>Plan</button>
+          <button className={tab === "about" ? "active" : ""} onClick={() => setTab("about")}>About</button>
         </nav>
       </header>
 
@@ -253,6 +295,44 @@ function App() {
             </div>
             <p className="hint">Plan: {limit} GB / Month (Heuristic: Showing Daily against Plan)</p>
           </div>
+        </div>
+      )}
+
+      {tab === "apps" && (
+        <div className="fade-in">
+          <div className="tracking-toggle-card" style={{ marginBottom: "1.5rem" }}>
+             <div className="toggle-header">
+                <span className="label">Detailed App Tracking</span>
+                <label className="switch">
+                  <input type="checkbox" checked={isDetailedTracking} onChange={toggleTracking} />
+                  <span className="slider round"></span>
+                </label>
+             </div>
+             <p className="hint">Requires root authentication to map network traffic to specific applications for the current session.</p>
+          </div>
+
+          {isDetailedTracking ? (
+            <div className="app-stats-list fade-in">
+              <label>Application Session Usage</label>
+              {appStats.length === 0 ? (
+                <p className="empty">Gathering data...</p>
+              ) : (
+                appStats.map((app, i) => (
+                  <div key={i} className="app-stat-item">
+                    <span className="app-name">{app.name}</span>
+                    <div className="app-usage-values">
+                      <span>⬇ {formatBytes(app.download)}</span>
+                      <span>⬆ {formatBytes(app.upload)}</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : (
+            <div className="info-box">
+              <p>Enable detailed tracking above to see which applications are using your data.</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -347,6 +427,25 @@ function App() {
             <h3>Traffic Classification</h3>
             <p><strong>Total Traffic:</strong> Includes all bytes moving through the interface (LAN + Internet).</p>
             <p><strong>Note:</strong> Perfectly splitting Internet vs LAN requires root-level packet inspection, which this app avoids for security. Use "Plan" to monitor your ISP limits.</p>
+          </div>
+        </div>
+      )}
+
+      {tab === "about" && (
+        <div className="about-panel fade-in">
+          <div className="about-card">
+             <img src="/tauri.svg" alt="Logo" className="about-logo" />
+             <h2>Gnome Data Stats</h2>
+             <p className="version">Version {appVersion}</p>
+             <p className="description">
+                A modern, lightweight network data usage monitor for GNOME and other Linux desktops. 
+                Track real-time speeds, session totals, and granular history with a native-feeling interface.
+             </p>
+             <div className="links">
+                <a href="https://github.com/tohju/gnome-data-stats" target="_blank" rel="noreferrer">GitHub Repository</a>
+                <a href="https://tauri.app" target="_blank" rel="noreferrer">Built with Tauri</a>
+             </div>
+             <p className="legal">Licensed under MIT. © 2026 Tohju.</p>
           </div>
         </div>
       )}

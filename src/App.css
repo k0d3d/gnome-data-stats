@@ -347,3 +347,145 @@ input[type="number"] {
   line-height: 1.5;
   color: var(--adwaita-text-dim);
 }
+
+/* Tracking Toggle Switch */
+.tracking-toggle-card {
+  background: var(--adwaita-card-bg);
+  padding: 1.5rem;
+  border-radius: 16px;
+  border: 1px solid var(--adwaita-border);
+}
+
+.toggle-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #444;
+  transition: .4s;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s;
+}
+
+input:checked + .slider {
+  background-color: var(--adwaita-accent);
+}
+
+input:focus + .slider {
+  box-shadow: 0 0 1px var(--adwaita-accent);
+}
+
+input:checked + .slider:before {
+  transform: translateX(20px);
+}
+
+.slider.round {
+  border-radius: 24px;
+}
+
+.slider.round:before {
+  border-radius: 50%;
+}
+
+.app-stat-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.8rem 1rem;
+  background: #242424;
+  margin-bottom: 0.5rem;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.app-name {
+  font-weight: 600;
+  color: white;
+}
+
+.app-usage-values {
+  display: flex;
+  gap: 1rem;
+  color: var(--adwaita-text-dim);
+  font-family: monospace;
+}
+
+/* About Panel */
+.about-card {
+  text-align: center;
+  padding: 2rem;
+  background: var(--adwaita-card-bg);
+  border-radius: 20px;
+  border: 1px solid var(--adwaita-border);
+}
+
+.about-logo {
+  width: 80px;
+  height: 80px;
+  margin-bottom: 1.5rem;
+}
+
+.version {
+  color: var(--adwaita-text-dim);
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+}
+
+.description {
+  line-height: 1.6;
+  color: #ccc;
+  margin-bottom: 2rem;
+}
+
+.links {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  margin-bottom: 2rem;
+}
+
+.links a {
+  color: var(--adwaita-accent);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.links a:hover {
+  text-decoration: underline;
+}
+
+.legal {
+  font-size: 0.75rem;
+  color: #666;
+}

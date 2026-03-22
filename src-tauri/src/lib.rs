@@ -8,6 +8,10 @@ use tauri::tray::{TrayIconBuilder};
 use tauri_plugin_sql::{Migration, MigrationKind, DbInstances, DbPool};
 use chrono::{Local, Datelike, Timelike};
 use sqlx::sqlite::SqlitePool;
+use std::sync::Mutex;
+
+mod app_stats;
+use app_stats::{AppUsage, get_process_map};
 
 #[derive(Serialize, Clone, Debug)]
 struct NetworkInterface {
@@ -38,6 +42,20 @@ struct NetState {
     last_update: Option<Instant>,
     accumulated: HashMap<String, (u64, u64)>,
     session_totals: HashMap<String, (u64, u64)>,
+}
+
+struct AppState {
+    tracking_enabled: Mutex<bool>,
+    app_usage: Mutex<HashMap<String, AppUsage>>,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            tracking_enabled: Mutex::new(false),
+            app_usage: Mutex::new(HashMap::new()),
+        }
+    }
 }
 
 fn format_tray_speed(bytes_per_sec: f64) -> String {
@@ -137,8 +155,25 @@ async fn get_history<R: Runtime>(
     Ok(result)
 }
 
+#[tauri::command]
+async fn toggle_app_tracking(state: tauri::State<'_, AppState>) -> Result<bool, String> {
+    let mut enabled = state.tracking_enabled.lock().unwrap();
+    *enabled = !*enabled;
+    Ok(*enabled)
+}
+
+#[tauri::command]
+async fn get_app_usage(state: tauri::State<'_, AppState>) -> Result<Vec<AppUsage>, String> {
+    let usage = state.app_usage.lock().unwrap();
+    Ok(usage.values().cloned().collect())
+}
+
 fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
     let handle = app.handle().clone();
+    let app_state = app.state::<AppState>();
+    let app_state_inner = app_state.inner().clone();
+
+    // Main network monitoring thread
     std::thread::spawn(move || {
         let mut state = NetState::default();
         let mut save_counter = 0;
@@ -194,13 +229,11 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
             save_counter += 1;
 
             if save_counter >= 30 {
-                // Save to database
                 let handle_clone = handle.clone();
                 let accumulated = state.accumulated.clone();
                 state.accumulated.clear();
                 save_counter = 0;
 
-                // Fire and forget save
                 tauri::async_runtime::spawn(async move {
                     if let Ok(pool) = get_pool(&handle_clone).await {
                         let now = Local::now();
@@ -210,7 +243,6 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
                         for (iface, (rx, tx)) in accumulated {
                             if rx == 0 && tx == 0 { continue; }
 
-                            // Update daily_stats
                             let _ = sqlx::query(
                                 "INSERT INTO daily_stats (day, interface, download, upload) 
                                  VALUES (?, ?, ?, ?) 
@@ -225,7 +257,6 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
                             .execute(&pool)
                             .await;
 
-                            // Update hourly_stats
                             let _ = sqlx::query(
                                 "INSERT INTO hourly_stats (time_period, interface, download, upload) 
                                  VALUES (?, ?, ?, ?) 
@@ -240,8 +271,6 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
                             .execute(&pool)
                             .await;
                         }
-                        
-                        // Also emit to frontend so it can refresh if open
                         let _ = handle_clone.emit("stats-saved", ());
                     }
                 });
@@ -250,44 +279,50 @@ fn start_monitoring<R: Runtime>(app: &tauri::App<R>) {
             std::thread::sleep(Duration::from_secs(1));
         }
     });
-}
 
-mod app_stats;
-
-use app_stats::{AppUsage, get_process_map};
-use std::sync::Mutex;
-
-#[derive(Default)]
-struct AppState {
-    tracking_enabled: Mutex<bool>,
-    app_usage: Mutex<HashMap<String, AppUsage>>,
-}
-
-#[tauri::command]
-async fn toggle_app_tracking(state: tauri::State<'_, AppState>) -> Result<bool, String> {
-    let mut enabled = state.tracking_enabled.lock().unwrap();
-    if !*enabled {
-        // Here we would use pkexec to run a sidecar or elevate.
-        // For the sake of this implementation, we simulate the elevation dialog trigger
-        // by returning a "needs elevation" flag or similar if it were a real helper.
-        // We will assume the user clicks "Yes" in the GNOME dialog.
-        *enabled = true;
-        Ok(true)
-    } else {
-        *enabled = false;
-        Ok(false)
-    }
-}
-
-#[tauri::command]
-async fn get_app_usage(state: tauri::State<'_, AppState>) -> Result<Vec<AppUsage>, String> {
-    let enabled = state.tracking_enabled.lock().unwrap();
-    if !*enabled {
-        return Ok(vec![]);
-    }
-    
-    let usage = state.app_usage.lock().unwrap();
-    Ok(usage.values().cloned().collect())
+    // App monitoring thread
+    let app_handle_for_stats = app.handle().clone();
+    std::thread::spawn(move || {
+        let mut last_io = HashMap::new();
+        
+        loop {
+            let enabled = *app_state_inner.tracking_enabled.lock().unwrap();
+            if enabled {
+                if let Ok(all_procs) = procfs::process::all_processes() {
+                    let mut current_usage = app_state_inner.app_usage.lock().unwrap();
+                    
+                    for p in all_procs {
+                        if let Ok(proc) = p {
+                            if let Ok(io) = proc.io() {
+                                let pid = proc.pid();
+                                let name = proc.stat().map(|s| s.comm).unwrap_or_else(|_| "unknown".to_string());
+                                
+                                let (prev_read, prev_write) = last_io.get(&pid).cloned().unwrap_or((io.read_bytes, io.write_bytes));
+                                
+                                let read_delta = io.read_bytes.saturating_sub(prev_read);
+                                let write_delta = io.write_bytes.saturating_sub(prev_write);
+                                
+                                if read_delta > 0 || write_delta > 0 {
+                                    let entry = current_usage.entry(name.clone()).or_insert(AppUsage {
+                                        name: name.clone(),
+                                        download: 0,
+                                        upload: 0,
+                                    });
+                                    entry.download += read_delta;
+                                    entry.upload += write_delta;
+                                }
+                                
+                                last_io.insert(pid, (io.read_bytes, io.write_bytes));
+                            }
+                        }
+                    }
+                }
+            } else {
+                last_io.clear();
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

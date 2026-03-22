@@ -1,7 +1,5 @@
-use std::collections::HashMap;
 use serde::Serialize;
-use procfs::process::Process;
-use std::fs;
+use std::collections::HashMap;
 
 #[derive(Serialize, Clone, Debug, Default)]
 pub struct AppUsage {
@@ -23,8 +21,3 @@ pub fn get_process_map() -> HashMap<u32, String> {
     }
     map
 }
-
-// In a real scenario, this would involve complex packet capture matching inodes.
-// For this prototype, we'll use a simpler heuristic: reading /proc/[pid]/net/dev if available 
-// or /proc/[pid]/io for general I/O as a proxy for network activity if we can't get root packet capture easily.
-// However, the user asked for root auth dialog, so we will implement a skeleton for the privileged collector.

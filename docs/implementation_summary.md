@@ -27,19 +27,28 @@
   - Integrated an interface selector directly into the History view.
 - **Database Migrations:** Implemented a versioned migration system to seamlessly upgrade existing databases (adding `hourly_stats` without data loss).
 
+### Phase 7: App Tracking & UX Refinements (v0.3.1 - Completed)
+- **Single Instance Enforcement:** Added the `tauri-plugin-single-instance` to prevent multiple app instances from running simultaneously.
+- **History Pagination:** Added pagination (20 items per page) to the history view to improve performance with large datasets.
+- **Detailed App Tracking (Privileged):**
+  - Added a toggle in the "Live" tab to enable per-application network monitoring.
+  - Implemented the `toggle_app_tracking` command to handle Polkit/root authentication triggers.
+  - Integrated `procfs` and `pnet` crates in the backend to map sockets to specific processes.
+- **About Menu:** Added a dedicated "About" tab displaying the application version, description, and project links.
+- **UI Polishing:** Added toggle switches and styled the per-app usage list with Adwaita-consistent visuals.
+
 ---
 
 ## 🔧 Technical Details: Traffic Differentiation
 - **Heuristic Approach:** The app monitors all traffic on the selected interface.
-- **Classification Note:** To maintain security and avoid requiring `root` privileges, the app currently tracks total interface throughput. An information panel was added to the "Plan" tab to explain how this relates to ISP data caps.
-- **Direct SQL Access:** The app uses `tauri-plugin-sql` and `sqlx` in the Rust backend to manage data efficiently.
+- **Classification Note:** To maintain security and avoid requiring `root` privileges by default, the app tracks total interface throughput. Detailed app tracking is opt-in and requires root elevation via Polkit.
 
 ---
 
 ## 🔧 Critical Fixes & System Setup
 - **Dependency Resolutions:** Fixed `tauri-plugin-opener` naming and resolved Tauri v2 `tray-icon` feature conflicts.
-- **Backend Libraries:** Added `sqlx`, `chrono`, and `serde` to the Rust side to support advanced data handling.
-- **Tauri Config:** Corrected the placement of the `plugins` section in `tauri.conf.json` for Tauri v2 compatibility.
+- **Backend Libraries:** Added `sqlx`, `chrono`, `pnet`, `procfs`, and `tauri-plugin-single-instance` to the Rust side.
+- **Tauri Config:** Corrected the placement of the `plugins` section in `tauri.conf.json`.
 
 ---
 
@@ -58,8 +67,9 @@ To sync versions and build the production-ready installers in one command:
 pnpm build:release
 ```
 
-### Output Files
-When building version `X.Y.Z`, Tauri automatically generates the files with the correct version in the name:
-- **Debian (.deb):** `src-tauri/target/release/bundle/deb/gnome-data-stats_X.Y.Z_amd64.deb`
-- **AppImage:** `src-tauri/target/release/bundle/appimage/gnome-data-stats_X.Y.Z_amd64.AppImage`
-- **Binary:** `src-tauri/target/release/gnome-data-stats`
+### GitHub Actions Release
+To automate a release on GitHub, update the version in `package.json` and run:
+```bash
+pnpm release
+```
+This will sync versions, tag the commit, and push to the `master` branch to trigger the build workflow.
